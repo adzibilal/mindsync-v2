@@ -318,7 +318,7 @@ export default function PlaygroundPage() {
                           className={cn(
                             "px-4 py-2.5 text-[14px] leading-relaxed",
                             msg.role === "user"
-                              ? "rounded-2xl rounded-br-md bg-primary text-ink"
+                              ? "rounded-2xl rounded-br-md bg-primary text-primary-foreground"
                               : "rounded-2xl rounded-bl-md bg-canvas-soft text-ink overflow-hidden"
                           )}
                         >

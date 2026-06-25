@@ -2,9 +2,11 @@ FROM python:3.11-slim
 
 WORKDIR /app
 
-# Install system deps for PyMuPDF
+# Install system deps for PyMuPDF + Tesseract OCR (Indonesian + English)
 RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
+    tesseract-ocr \
+    tesseract-ocr-ind \
     && rm -rf /var/lib/apt/lists/*
 
 # Copy project files

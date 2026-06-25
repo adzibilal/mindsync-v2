@@ -34,6 +34,15 @@ def extract_text_from_text(file_bytes: bytes) -> str:
     return file_bytes.decode("utf-8", errors="replace")
 
 
+def extract_text_from_image(file_bytes: bytes) -> str:
+    """OCR text from an image (scanned letters etc.) via Tesseract (Indonesian + English)."""
+    import pytesseract
+    from PIL import Image
+
+    image = Image.open(io.BytesIO(file_bytes))
+    return pytesseract.image_to_string(image, lang="ind+eng")
+
+
 def chunk_text(
     text: str,
     chunk_size: int = 800,
@@ -54,6 +63,7 @@ async def ingest_document(
     file_bytes: bytes,
     document_id: str,
     source: str = "",
+    category: str | None = None,
     chunk_size: int = 800,
     chunk_overlap: int = 150,
 ) -> int:
@@ -70,10 +80,14 @@ async def ingest_document(
         text = extract_text_from_docx(file_bytes)
     elif ext in (".txt", ".md"):
         text = extract_text_from_text(file_bytes)
+    elif ext in (".png", ".jpg", ".jpeg", ".webp", ".gif", ".bmp", ".tiff"):
+        text = extract_text_from_image(file_bytes)
     else:
         raise ValueError(f"Unsupported file type: {ext}")
 
     if not text.strip():
+        if ext in (".png", ".jpg", ".jpeg", ".webp", ".gif", ".bmp", ".tiff"):
+            raise ValueError("Tidak ada teks terdeteksi pada gambar")
         raise ValueError("No text extracted from document")
 
     # Chunk
@@ -86,6 +100,7 @@ async def ingest_document(
             "document_id": document_id,
             "source": source or file_name,
             "chunk_index": i,
+            "category": category,
         }
         for i in range(len(chunks))
     ]

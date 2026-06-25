@@ -114,7 +114,7 @@ async def _process_message(
         await waha_client.send_seen(session, chat_id)
         await waha_client.start_typing(session, chat_id)
 
-        # Run RAG pipeline
+        # Run RAG pipeline (sources are cited by the LLM per system prompt)
         result = await rag.answer_query(text, history=history)
         answer = result["answer"]
 

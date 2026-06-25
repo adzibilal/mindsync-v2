@@ -7,14 +7,14 @@ import mimetypes
 from uuid import uuid4
 from pathlib import Path
 from pydantic import BaseModel
-from fastapi import APIRouter, Depends, UploadFile, File, HTTPException
+from fastapi import APIRouter, Depends, UploadFile, File, Form, Query, HTTPException
 from fastapi.responses import FileResponse, StreamingResponse
 from sqlalchemy import select, delete as sa_delete
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.deps import get_db, get_current_user, async_session_factory
 from app.core.security import create_jwt_token
-from app.models import User, Document, Conversation, Message, Setting
+from app.models import User, Document, Conversation, Message, Setting, Category
 from app.rag.engine import RagEngine
 from app.rag.ingestion import ingest_document
 from app.services.conversation import (
@@ -65,16 +65,26 @@ async def login(req: LoginRequest, db: AsyncSession = Depends(get_db)):
 @router.post("/documents")
 async def upload_document(
     file: UploadFile = File(...),
+    category_id: str | None = Form(None),
     db: AsyncSession = Depends(get_db),
     current_user: str = Depends(get_current_user),
 ):
     """Upload and ingest a document."""
+    # Resolve category (optional)
+    category_name: str | None = None
+    if category_id:
+        cat = await db.scalar(select(Category).where(Category.id == category_id))
+        if not cat:
+            raise HTTPException(404, "Category not found")
+        category_name = cat.name
+
     # Save document metadata
     doc = Document(
         id=uuid4(),
         name=file.filename or "unknown",
         source=file.filename,
         status="processing",
+        category_id=category_id or None,
     )
     db.add(doc)
     await db.commit()
@@ -101,6 +111,7 @@ async def upload_document(
             file_bytes=file_bytes,
             document_id=str(doc.id),
             source=file.filename,
+            category=category_name,
         )
         doc.status = "done"
         doc.chunk_count = chunk_count
@@ -114,12 +125,19 @@ async def upload_document(
 
 @router.get("/documents")
 async def list_documents(
+    category_id: str | None = Query(None),
     db: AsyncSession = Depends(get_db),
     current_user: str = Depends(get_current_user),
 ):
-    """List all documents."""
-    result = await db.execute(select(Document).order_by(Document.created_at.desc()))
-    docs = result.scalars().all()
+    """List all documents (optionally filtered by category)."""
+    stmt = (
+        select(Document, Category.name)
+        .outerjoin(Category, Document.category_id == Category.id)
+        .order_by(Document.created_at.desc())
+    )
+    if category_id:
+        stmt = stmt.where(Document.category_id == category_id)
+    result = await db.execute(stmt)
     return [
         {
             "id": str(d.id),
@@ -128,9 +146,68 @@ async def list_documents(
             "status": d.status,
             "chunk_count": d.chunk_count,
             "created_at": d.created_at.isoformat() if d.created_at else None,
+            "category_id": str(d.category_id) if d.category_id else None,
+            "category_name": cat_name,
         }
-        for d in docs
+        for d, cat_name in result.all()
     ]
+
+
+# ────────────────────── Categories ──────────────────────
+
+
+class CategoryRequest(BaseModel):
+    name: str
+
+
+@router.get("/categories")
+async def list_categories(
+    db: AsyncSession = Depends(get_db),
+    current_user: str = Depends(get_current_user),
+):
+    """List document categories."""
+    result = await db.execute(select(Category).order_by(Category.name))
+    return [{"id": str(c.id), "name": c.name} for c in result.scalars().all()]
+
+
+@router.post("/categories")
+async def create_category(
+    req: CategoryRequest,
+    db: AsyncSession = Depends(get_db),
+    current_user: str = Depends(get_current_user),
+):
+    """Create a new category."""
+    name = req.name.strip()
+    if not name:
+        raise HTTPException(422, "Category name required")
+    existing = await db.scalar(select(Category).where(Category.name == name))
+    if existing:
+        raise HTTPException(409, "Category already exists")
+    cat = Category(id=uuid4(), name=name)
+    db.add(cat)
+    await db.commit()
+    return {"id": str(cat.id), "name": cat.name}
+
+
+@router.delete("/categories/{category_id}")
+async def delete_category(
+    category_id: str,
+    db: AsyncSession = Depends(get_db),
+    current_user: str = Depends(get_current_user),
+):
+    """Delete a category. Documents keep their data but lose the category link."""
+    cat = await db.scalar(select(Category).where(Category.id == category_id))
+    if not cat:
+        raise HTTPException(404, "Category not found")
+    # Unlink documents so the FK doesn't block deletion
+    await db.execute(
+        Document.__table__.update()
+        .where(Document.category_id == category_id)
+        .values(category_id=None)
+    )
+    await db.delete(cat)
+    await db.commit()
+    return {"status": "deleted", "id": category_id}
 
 
 @router.get("/documents/{doc_id}/file")
@@ -566,3 +643,79 @@ async def get_stats(
         "total_conversations": conv_count or 0,
         "total_documents": doc_count or 0,
     }
+
+
+# ────────────────────── Evaluation ──────────────────────
+
+# Bot phrases indicating it had no answer (mirror message_handler.no_info_phrases)
+NO_INFO_PHRASES = [
+    "tidak memiliki informasi",
+    "tidak ada informasi",
+    "belum ada info",
+    "tidak tahu",
+    "tidak menemukan",
+]
+
+
+@router.get("/evaluation/top-questions")
+async def top_questions(
+    limit: int = Query(20, ge=1, le=100),
+    db: AsyncSession = Depends(get_db),
+    current_user: str = Depends(get_current_user),
+):
+    """Most frequently asked student questions."""
+    from sqlalchemy import func
+
+    stmt = (
+        select(Message.content, func.count().label("count"))
+        .where(Message.role == "user")
+        .group_by(Message.content)
+        .order_by(func.count().desc())
+        .limit(limit)
+    )
+    result = await db.execute(stmt)
+    return [{"question": content, "count": count} for content, count in result.all()]
+
+
+@router.get("/evaluation/unanswered")
+async def unanswered_questions(
+    limit: int = Query(50, ge=1, le=200),
+    db: AsyncSession = Depends(get_db),
+    current_user: str = Depends(get_current_user),
+):
+    """Questions the bot answered with a 'not found' response — KB gaps to fill."""
+    from sqlalchemy import or_
+
+    # Assistant messages that look like a no-info response
+    stmt = (
+        select(Message)
+        .where(
+            Message.role == "assistant",
+            or_(*[Message.content.ilike(f"%{p}%") for p in NO_INFO_PHRASES]),
+        )
+        .order_by(Message.created_at.desc())
+        .limit(limit)
+    )
+    no_info_msgs = (await db.execute(stmt)).scalars().all()
+
+    # Pair each with the preceding user question in the same conversation
+    out = []
+    for m in no_info_msgs:
+        prev = await db.scalar(
+            select(Message)
+            .where(
+                Message.conversation_id == m.conversation_id,
+                Message.role == "user",
+                Message.created_at <= m.created_at,
+            )
+            .order_by(Message.created_at.desc())
+            .limit(1)
+        )
+        if prev:
+            out.append(
+                {
+                    "question": prev.content,
+                    "answered_at": m.created_at.isoformat() if m.created_at else None,
+                }
+            )
+    return out

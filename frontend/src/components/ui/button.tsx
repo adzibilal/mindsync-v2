@@ -9,7 +9,7 @@ const buttonVariants = cva(
     variants: {
       variant: {
         default:
-          "rounded-xl bg-primary text-primary-foreground hover:bg-[#cdffad] active:bg-[#c5edab]",
+          "rounded-xl bg-primary text-primary-foreground hover:bg-primary-active active:bg-primary-neutral",
         secondary:
           "rounded-xl bg-secondary text-secondary-foreground hover:bg-[#d4d8d0] active:bg-[#c0c4bc]",
         tertiary:

@@ -58,6 +58,10 @@ async def lifespan(app: FastAPI):
     # Create tables on startup
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
+        # Mini-migration: create_all won't add new columns to existing tables.
+        await conn.exec_driver_sql(
+            "ALTER TABLE documents ADD COLUMN IF NOT EXISTS category_id UUID REFERENCES categories(id)"
+        )
     logger.info("✅ Database tables ready")
 
     # Create Qdrant collection (sync, uses config dim, no embedding needed)

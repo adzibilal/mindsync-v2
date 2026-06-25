@@ -11,6 +11,7 @@ import {
   Settings,
   LogOut,
   Bot,
+  BarChart3,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useAuthStore } from "@/lib/auth-store";
@@ -19,6 +20,7 @@ const navItems = [
   { href: "/dashboard", label: "Dashboard", icon: LayoutDashboard },
   { href: "/knowledge-base", label: "Knowledge Base", icon: BookOpen },
   { href: "/conversations", label: "Conversations", icon: MessageSquare },
+  { href: "/evaluation", label: "Evaluasi", icon: BarChart3 },
   { href: "/sessions", label: "WhatsApp Session", icon: Smartphone },
   { href: "/playground", label: "Playground", icon: Play },
   { href: "/settings", label: "Settings", icon: Settings },

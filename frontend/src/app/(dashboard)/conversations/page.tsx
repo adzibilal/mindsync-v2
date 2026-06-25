@@ -103,7 +103,7 @@ export default function ConversationsPage() {
                       <div
                         className={cn(
                           "flex h-10 w-10 shrink-0 items-center justify-center rounded-lg text-[14px] font-[900]",
-                          active ? "bg-primary text-ink" : "bg-canvas-soft text-ink"
+                          active ? "bg-primary text-primary-foreground" : "bg-canvas-soft text-ink"
                         )}
                       >
                         {getInitial(conv.contact_name, conv.chat_id)}
@@ -212,7 +212,7 @@ export default function ConversationsPage() {
                           className={cn(
                             "px-4 py-2.5 text-[14px] leading-relaxed",
                             isUser
-                              ? "rounded-2xl rounded-br-md bg-primary text-ink"
+                              ? "rounded-2xl rounded-br-md bg-primary text-primary-foreground"
                               : "rounded-2xl rounded-bl-md bg-canvas-soft text-ink overflow-hidden"
                           )}
                         >

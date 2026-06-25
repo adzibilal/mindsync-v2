@@ -79,10 +79,12 @@ export const authApi = {
 };
 
 export const documentsApi = {
-  list: () => api.get<Document[]>("/api/documents"),
-  upload: (file: File) => {
+  list: (categoryId?: string) =>
+    api.get<Document[]>(`/api/documents${categoryId ? `?category_id=${categoryId}` : ""}`),
+  upload: ({ file, categoryId }: { file: File; categoryId?: string }) => {
     const formData = new FormData();
     formData.append("file", file);
+    if (categoryId) formData.append("category_id", categoryId);
     return api.post<DocumentUploadResponse>("/api/documents", formData);
   },
   delete: (id: string) => api.delete<{ status: string; id: string }>(`/api/documents/${id}`),
@@ -94,6 +96,19 @@ export const documentsApi = {
     const token = localStorage.getItem("mindsync_token");
     return fetch(`${API_BASE}/api/documents/${id}/file?token=${token || ""}`);
   },
+};
+
+export const categoriesApi = {
+  list: () => api.get<Category[]>("/api/categories"),
+  create: (name: string) => api.post<Category>("/api/categories", { name }),
+  delete: (id: string) => api.delete<{ status: string; id: string }>(`/api/categories/${id}`),
+};
+
+export const evaluationApi = {
+  topQuestions: () =>
+    api.get<{ question: string; count: number }[]>("/api/evaluation/top-questions"),
+  unanswered: () =>
+    api.get<{ question: string; answered_at: string | null }[]>("/api/evaluation/unanswered"),
 };
 
 export const conversationsApi = {
@@ -180,6 +195,13 @@ export interface Document {
   status: "pending" | "processing" | "done" | "failed";
   chunk_count: number;
   created_at: string;
+  category_id: string | null;
+  category_name: string | null;
+}
+
+export interface Category {
+  id: string;
+  name: string;
 }
 
 export interface DocumentUploadResponse {

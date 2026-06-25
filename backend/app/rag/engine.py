@@ -126,6 +126,23 @@ class RagEngine:
             })
         return results
 
+    async def _get_system_prompt(self) -> str:
+        """System prompt from DB setting (admin-editable), fallback to config default."""
+        try:
+            from app.core.deps import async_session_factory
+            from app.models import Setting
+            from sqlalchemy import select
+
+            async with async_session_factory() as db:
+                val = await db.scalar(
+                    select(Setting.value).where(Setting.key == "system_prompt")
+                )
+            if val and val.strip():
+                return val
+        except Exception:
+            pass
+        return self.settings.default_system_prompt
+
     async def generate_answer(
         self,
         query: str,
@@ -135,7 +152,7 @@ class RagEngine:
     ) -> str:
         """Generate answer via LLM through router with retry logic."""
         if system_prompt is None:
-            system_prompt = self.settings.default_system_prompt
+            system_prompt = await self._get_system_prompt()
 
         messages = [{"role": "system", "content": system_prompt}]
 
@@ -219,7 +236,7 @@ class RagEngine:
     ):
         """Generate answer via LLM with streaming. Yields text chunks."""
         if system_prompt is None:
-            system_prompt = self.settings.default_system_prompt
+            system_prompt = await self._get_system_prompt()
 
         messages = [{"role": "system", "content": system_prompt}]
 

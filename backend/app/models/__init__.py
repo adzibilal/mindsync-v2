@@ -23,11 +23,22 @@ class User(Base):
     documents = relationship("Document", back_populates="user")
 
 
+class Category(Base):
+    __tablename__ = "categories"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    name = Column(String(255), unique=True, nullable=False, index=True)
+    created_at = Column(DateTime, default=func.now())
+
+    documents = relationship("Document", back_populates="category")
+
+
 class Document(Base):
     __tablename__ = "documents"
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     user_id = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=True)
+    category_id = Column(UUID(as_uuid=True), ForeignKey("categories.id"), nullable=True)
     name = Column(String(500), nullable=False)
     source = Column(String(500), nullable=True)
     status = Column(String(50), default="pending")  # pending, processing, done, failed
@@ -35,6 +46,7 @@ class Document(Base):
     created_at = Column(DateTime, default=func.now())
 
     user = relationship("User", back_populates="documents")
+    category = relationship("Category", back_populates="documents")
 
 
 class Conversation(Base):
