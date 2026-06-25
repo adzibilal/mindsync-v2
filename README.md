@@ -1,130 +1,164 @@
-# MindSync — RAG WhatsApp Bot
+# MindSync — Asisten Informasi Akademik (RAG WhatsApp Bot)
 
-WhatsApp bot dengan RAG (Retrieval-Augmented Generation) untuk menjawab pertanyaan dari knowledge base.
+Sistem informasi akademik berbasis percakapan. Admin kampus mengunggah dokumen
+resmi (peraturan, pengumuman, surat edaran, jadwal, event); mahasiswa bertanya
+lewat **WhatsApp** dan menerima jawaban ringkas yang **bersumber dari dokumen
+resmi** via pipeline RAG (Retrieval-Augmented Generation).
+
+## Fitur
+
+- 📄 **Knowledge base** — upload PDF, DOCX, TXT, MD, dan **gambar hasil pindai (OCR)**.
+- 🗂️ **Kategori dokumen** dinamis (dikelola admin) + filter.
+- 💬 **WhatsApp Q&A** via WAHA — debounce, indikator "diketik", rate limit.
+- 🔎 **Sumber jawaban** dikutip oleh model pada tiap balasan.
+- 🙅 **Jawaban jujur "tidak ditemukan"** saat info tak ada di knowledge base.
+- 📊 **Evaluasi** — pertanyaan terbanyak & pertanyaan yang belum terjawab (bahan perbaikan KB).
+- 🧪 **Playground** — uji RAG langsung dari dashboard (streaming + lihat sumber).
+- ⚙️ **System prompt** dapat diedit admin (tersimpan di DB, langsung dipakai).
+
+## Arsitektur
+
+```
+Mahasiswa (WhatsApp) ──> WAHA (VPS) ──webhook──> Backend (FastAPI)
+                                                     │
+                          ┌──────────────┬───────────┼───────────────┐
+                       Postgres        Qdrant     LiteLLM router   (OCR Tesseract)
+                      (metadata)    (vektor KB)   (LLM+embedding)
+                                                     │
+Admin (Browser) ──> Frontend (Next.js) ──REST──> Backend
+```
+
+- **WAHA self-hosted** (di VPS, mis. `https://waha.adzibilal.my.id`) — tidak lagi di docker-compose.
+- Karena WAHA remote, backend harus dijangkau publik (saat dev pakai Cloudflare Tunnel/ngrok → set `WEBHOOK_URL`).
 
 ## Quick Start
 
 ```bash
 # 1. Setup environment
-cp .env.example .env
-# Edit .env dengan konfigurasi yang sesuai
+cp .env.example .env        # isi WAHA_URL, WAHA_API_KEY, WEBHOOK_URL, LITELLM_*, dll
 
-# 2. Start services
+# 2. (sekali) install OCR engine untuk dokumen gambar
+sudo apt-get install -y tesseract-ocr tesseract-ocr-ind
+
+# 3. Jalankan semua (Docker: Postgres+Qdrant, lalu Backend & Frontend)
 ./mindsync.sh up
 
-# 3. Check status
+# 4. Cek status
 ./mindsync.sh status
 ```
 
-## API Documentation
+`./mindsync.sh {up|down|logs|logs-be|logs-fe|status}`
 
-Swagger UI: http://localhost:8000/docs
+- API docs (Swagger): http://localhost:8000/docs
+- Dashboard: http://localhost:3000
 
-## Project Structure
+> Catatan dev: backend dijalankan tanpa `--reload` oleh `mindsync.sh`, jadi
+> restart setelah ubah kode Python. URL tunnel ganti tiap restart → perbarui
+> `WEBHOOK_URL` lalu `POST /api/sessions/start` (webhook WAHA otomatis diperbarui).
+
+## Konfigurasi (.env)
+
+| Var | Keterangan |
+|-----|------------|
+| `DATABASE_URL` | Postgres (async) |
+| `QDRANT_URL` | Vector DB |
+| `WAHA_URL`, `WAHA_API_KEY` | Instance WAHA self-hosted di VPS |
+| `WAHA_HMAC_KEY` | Secret verifikasi webhook (SHA-512) |
+| `WEBHOOK_URL` | URL publik backend (tunnel saat dev) untuk webhook WAHA |
+| `LITELLM_BASE_URL`, `LITELLM_API_KEY`, `LITELLM_MODEL` | Router LLM (OpenAI-compatible) |
+| `EMBEDDING_API_URL`, `EMBEDDING_MODEL`, `EMBEDDING_DIM` | API embedding (default `text-embedding-3-large`, dim 3072) |
+| `JWT_SECRET` | Token login admin |
+
+## Struktur Project
 
 ```
 mindsync/
 ├── backend/
 │   ├── app/
-│   │   ├── api/          # REST API routes
-│   │   ├── core/         # Config, security, dependencies
-│   │   ├── rag/          # RAG engine (embedding, retrieval, generation)
-│   │   ├── waha/         # WhatsApp HTTP API client
-│   │   ├── models/       # SQLAlchemy models
-│   │   ├── services/     # Business logic (conversation, message handler)
-│   │   └── main.py       # FastAPI application
+│   │   ├── api/routes.py    # REST API (auth, documents, categories, evaluation, sessions, settings)
+│   │   ├── core/            # config, security (JWT+HMAC), deps
+│   │   ├── rag/             # engine (embed/retrieve/generate) + ingestion (extract+OCR+chunk)
+│   │   ├── waha/            # client + webhook handler
+│   │   ├── models/          # SQLAlchemy models
+│   │   ├── services/        # conversation, message_handler, rate_limiter
+│   │   └── main.py          # FastAPI app + mini-migrasi startup
 │   ├── pyproject.toml
-│   └── Dockerfile
+│   └── Dockerfile           # termasuk tesseract-ocr (OCR)
 ├── frontend/
-│   ├── src/
-│   │   ├── app/          # Next.js pages (App Router)
-│   │   ├── components/   # UI components (shadcn/ui)
-│   │   └── lib/          # API client, auth store, query provider
-│   └── Dockerfile
-├── docker-compose.yml
-└── mindsync.sh          # Helper script
+│   └── src/
+│       ├── app/(auth)/login, app/(dashboard)/{dashboard,knowledge-base,conversations,
+│       │                       evaluation,sessions,playground,settings}
+│       ├── components/{app,ui}
+│       └── lib/             # api client, auth store, query provider
+├── docker-compose.yml       # Postgres + Qdrant (WAHA = VPS terpisah)
+└── mindsync.sh
 ```
+
+## Model Data
+
+**PostgreSQL** — `users`, `categories`, `documents` (FK→users, categories),
+`conversations` (whatsapp/playground), `messages` (FK→conversations),
+`settings` (key-value, mis. `system_prompt`).
+
+**Qdrant** — koleksi `knowledge_base`; tiap chunk = 1 point, vektor 3072-dim,
+payload `{document_id, source, chunk_index, category, text}`. `documents.id`
+(Postgres) ⇄ `payload.document_id` (Qdrant).
 
 ## Tech Stack
 
-**Backend**
-- Python 3.12 + FastAPI
-- SQLAlchemy + asyncpg (PostgreSQL)
-- Qdrant (vector database)
-- multilingual-e5-large (embeddings)
-- LiteLLM proxy (LLM generation)
+**Backend** — Python 3.12, FastAPI, SQLAlchemy + asyncpg (PostgreSQL 16),
+Qdrant, LiteLLM router (LLM + embedding `text-embedding-3-large`),
+PyMuPDF/python-docx/Tesseract (ekstraksi & OCR), PyJWT.
 
-**Frontend**
-- Next.js 16 (App Router + TypeScript)
-- Tailwind CSS + shadcn/ui
-- TanStack Query (data fetching)
-- Zustand (auth state)
-- Lucide Icons
+**Frontend** — Next.js (App Router, TypeScript), Tailwind CSS + shadcn/ui,
+TanStack Query, Zustand (auth), Lucide Icons.
 
-**Infrastructure**
-- Docker Compose
-- PostgreSQL 16
-- Qdrant
-- WAHA (WhatsApp HTTP API)
-
-## Development
-
-```bash
-# Start everything
-./mindsync.sh up
-
-# Or manually:
-
-# Backend
-source .venv/bin/activate
-cd backend
-python3 -m uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
-
-# Frontend
-cd frontend
-npm run dev
-```
+**Infra** — Docker Compose (Postgres, Qdrant), WAHA self-hosted (VPS).
 
 ## Frontend Pages
 
-| Route | Description |
-|-------|-------------|
-| `/login` | Admin login page |
-| `/dashboard` | Overview stats |
-| `/knowledge-base` | Upload & manage documents |
-| `/conversations` | View WhatsApp chat history |
-| `/sessions` | WhatsApp session management (QR) |
-| `/playground` | Test RAG pipeline directly |
-| `/settings` | Configure system prompt, model, top_k, threshold |
+| Route | Deskripsi |
+|-------|-----------|
+| `/login` | Login admin |
+| `/dashboard` | Statistik ringkas |
+| `/knowledge-base` | Upload & kelola dokumen + kategori |
+| `/conversations` | Riwayat chat WhatsApp |
+| `/evaluation` | Pertanyaan terbanyak & belum terjawab |
+| `/sessions` | Kelola sesi WhatsApp (QR, start/stop/restart/logout) |
+| `/playground` | Uji RAG langsung |
+| `/settings` | Edit system prompt |
 
 ## API Endpoints
 
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| POST | /api/auth/login | Admin login (JWT) |
-| POST | /api/documents | Upload & ingest document |
-| GET | /api/documents | List documents |
-| DELETE | /api/documents/{id} | Delete document |
-| POST | /api/chat | RAG playground |
-| GET | /api/conversations | List conversations |
-| GET | /api/conversations/{chat_id}/messages | Get messages |
-| POST | /api/sessions/start | Start WAHA session |
-| GET | /api/sessions/{name}/qr | Get QR code |
-| GET | /api/sessions/{name}/status | Session status |
-| GET | /api/settings | Get settings |
-| PUT | /api/settings | Update settings |
-| GET | /api/stats | Dashboard stats |
-| POST | /webhooks/waha | WAHA webhook |
-| GET | /health | Health check |
+| Method | Endpoint | Deskripsi |
+|--------|----------|-----------|
+| POST | `/api/auth/login` | Login admin (JWT) |
+| GET/POST | `/api/documents` | List (filter `?category_id=`) / upload+ingest |
+| DELETE | `/api/documents/{id}` | Hapus dokumen + vektornya |
+| GET | `/api/documents/{id}/file` | Preview file asli |
+| GET/POST | `/api/categories` | List / buat kategori |
+| DELETE | `/api/categories/{id}` | Hapus kategori |
+| GET | `/api/conversations` | List percakapan |
+| GET | `/api/conversations/{chat_id}/messages` | Pesan per percakapan |
+| GET | `/api/evaluation/top-questions` | Pertanyaan terbanyak |
+| GET | `/api/evaluation/unanswered` | Pertanyaan dijawab "tidak ditemukan" |
+| GET/POST/DELETE | `/api/playground/sessions...` | Sesi playground (CRUD) |
+| POST | `/api/playground/sessions/{id}/stream` | Stream RAG (SSE) |
+| POST | `/api/sessions/start\|stop\|restart\|logout` | Kelola sesi WAHA |
+| GET | `/api/sessions/{name}/status` \| `/qr` | Status / QR sesi |
+| GET/PUT | `/api/settings` | Baca / ubah pengaturan (system prompt) |
+| GET | `/api/stats` | Statistik dashboard |
+| POST | `/webhooks/waha` | Webhook WAHA (verifikasi HMAC SHA-512) |
+| GET | `/health` | Health check |
 
 ## Status
 
-- [x] Phase 0: Setup & infrastructure
-- [x] Phase 1: RAG core pipeline
-- [x] Phase 2: WhatsApp ↔ RAG integration
-- [x] Phase 3: Frontend admin dashboard (Next.js)
-- [ ] Phase 4: Polish & hardening
-- [ ] Phase 5: Production deployment
+- [x] Setup & infrastruktur
+- [x] RAG core pipeline
+- [x] Integrasi WhatsApp ↔ RAG (WAHA self-hosted)
+- [x] Dashboard admin (Next.js)
+- [x] Penyesuaian skripsi: kategori dokumen, OCR gambar, sumber pada jawaban, view evaluasi
+- [ ] Hardening & deployment produksi
 
 ## License
 
