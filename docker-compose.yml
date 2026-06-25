@@ -1,0 +1,30 @@
+services:
+  qdrant:
+    image: qdrant/qdrant:latest
+    ports:
+      - "6334:6333"
+      - "6335:6334"
+    volumes:
+      - qdrant_data:/qdrant/storage
+    restart: unless-stopped
+
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-mindsync}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-mindsync}
+      POSTGRES_DB: ${POSTGRES_DB:-mindsync}
+    ports:
+      - "5432:5432"
+    volumes:
+      - pg_data:/var/lib/postgresql/data
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-mindsync}"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  qdrant_data:
+  pg_data:
